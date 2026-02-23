@@ -1,0 +1,20 @@
+# Helper for avoiding uploading 3rd party libraries (large and should be )
+# installed locally
+
+# Python Artifacts is being Ignored
+__pycache__/
+*.pyc
+*.pyo
+
+.vscode/
+venv/
+models/
+
+data/datasets
+
+
+# Data/model files
+*.csv
+*.pkl
+*.h5
+*.npy
