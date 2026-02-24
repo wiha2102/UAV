@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+## The libs of matplotlib, numba etc is not installed
+# after built, unsure if installation is in wrong order
+# and are overwritten somehow. !! Dont appear as any wrongs
+
 # Exit immediately if:
 #   - a command exits with non-zero status (-e)
 #   - an undefined variable is being used (-u)
