@@ -61,18 +61,28 @@ class Timer(ContextDecorator):
 
     def format_result(self) -> str:
         """ Format the result with auto-formatting based on duration """
-        if self.time_dst is None: "Timer not started or not stopped"
+        if self.time_dst is None: 
+            "Timer not started or not stopped"
+        
         if self.auto_format:
-            if self.time_dst >= 1.0     : t = f"{self.time_dst:.3f} s"
-            elif self.time_dst >= 1e-3  : t = f"{self.time_ms:.3f} ms"
-            else: t = f"{self.time_us:.3} µs"
-        else: t = f"{self.time_dst:.6f} S"
+            if self.time_dst >= 1.0: 
+                t = f"{self.time_dst:.3f} s"
+            
+            elif self.time_dst >= 1e-3:
+                t = f"{self.time_ms:.3f} ms"
+            
+            else:
+                t = f"{self.time_us:.3} µs"
+        
+        else:
+            t = f"{self.time_dst:.6f} S"
 
         # Add the name if provided
         prefix = f"{self.name}: " if self.name else ""
         return f"{prefix}{t}"
 
-    def reset(self): self.time_src, self.time_dst = None, None
+    def reset(self):
+        self.time_src, self.time_dst = None, None
 
 
 
@@ -85,4 +95,5 @@ def time_it(f):
     def wrapper(*args, **kwargs):
         with Timer(name=f.__name__, print_result=True):
             return f(*args, **kwargs)
+    
     return wrapper

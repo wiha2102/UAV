@@ -23,8 +23,10 @@ class CommandSpec:
     args    : List[Dict[str,Any]]=field(default_factory=list)
 
     def __post_init__(self):
+        
         if not self.name.isidentifier():
             raise ValueError(f"Command name `{self.name}` must be valid")
+        
         if not callable(self.handler):
             raise TypeError(f"{self.handler} must be callable")
 
@@ -40,22 +42,28 @@ def build_parser(commands: List[CommandSpec]) -> argparse.Namespace:
 
     for command in commands:
         p = sub.add_parser(command.name, help=command.help)
+        
         for argument in command.args:
             p.add_argument(*argument["flags"], **argument["kwargs"])
         
         p.set_defaults(_handler=command.handler)
+    
     return parser
 
 
 def mainrunner(f: Callable) -> Callable:
     @wraps(f)
     def wrapper(*args, **kwargs):
-        try: return f(*args, **kwargs)
+        try: 
+            return f(*args, **kwargs)
+        
         except KeyboardInterrupt:
             print("\nAborted by user")
             raise
+        
         except Exception as e:
             print("\nTest failed:\t{e}")
             traceback.print_exc()
             raise
+    
     return wrapper
