@@ -1,14 +1,26 @@
 """
 src/math/coords.py
 ------------------
-Script with mathematical operations specifically for coordination system change
-back and forth between spherical coordinates and cartesian coordinates as well
-as add / subtract angles.
+Coordinate transformations and spherical angle operations relates the to the 
+more accurate computations to the AOD and AOA operations. This module provides
+utilities for specifically.
 
-    - Numba accelerated (may be slower for this due to additional overhead) 
-      longer compilation time
+    - Cartesian <-> Spherical coordinate conversions
+    - Composition and subtraction of spherical angles, 3d rotations.
+    - Batch oriented numerical kernels
 
-This script focusing simply on simplistic mathematical operations.
+All heavy computations are numba-accelerated for efficient execution on larger
+arrays. Angles are expressed in degrees at the Public API boundary and 
+converted internally to radians for computations.
+
+Conversions:
+------------
+- Spherical coordinates follow (r, φ, θ):
+    r     : radius
+    φ     : azimuth angle in degrees (xy-plane, atan2(y, x))
+    θ     : inclination angle in degrees (angle from +z axis)
+- Outputs are float64 for numerical stability (maybe unnecessary).
+- Broadcasting is supported where explicitly mentioned.
 """
 from __future__ import annotations
 
@@ -40,12 +52,22 @@ ZERO    : Final[np.float64] = np.float64(0.0)
 @njit(fastmath=True, cache=True, inline='always')
 def _as_1d_array_numba(x: np.ndarray) -> np.ndarray:
     """
+    Numba compatible helper that flattens inputs into a 1D array in float64
+    array. Scalars are promoted to 1-length arrays to unify downstream
+    kernel behavior. !! (flatten must be considered caused bugs) !!
     """
     return np.array([x],dtype=np.float64) if x.ndim==0 else x.ravel()
 
 
 def _as_1d_array(x: Union[AF,float]) -> AF64:
     """
+    Convert scalars or array-like input into a flattened float64 array.
+
+        - scalars become length 1 arrays
+        - Higher-dimensional inputs are flattened
+        - dtype is normalized to float64
+    
+    Used to standardize inputs before vectorized or kernel operations
     """
     if isinstance(x,(int,float)): return np.array([x],np.float64)
 
@@ -56,6 +78,8 @@ def _as_1d_array(x: Union[AF,float]) -> AF64:
 @vectorize([float64(float64)], nopython=True, cache=True)
 def _clip_to_unit(x: float64) -> float64:
     """
+    Clip a floating points value to the closed interval [-1,1]. Primarily used
+    to guard against numerical drift applying inverse trigonometric functions.
     """
     if x > ONE: return ONE
     if x < NEG_ONE: return NEG_ONE
@@ -72,6 +96,10 @@ def _cart2sph_kernel(
     r: np.ndarray, p: np.ndarray, t: np.ndarray
 ) -> None:
     """
+    Numba-parallel kernel converting Cartesian coordinates to spherical. Takes 
+    the input cartesian coordinates (x,y,z) each as float64 arrays and perform
+    the conversion of the corresponding radius and elevation and azimuth, each
+    measured in radians.
     """
     n = len(x)
     for i in prange(n):
@@ -98,6 +126,24 @@ def _cart2sph_kernel(
 
 def cartesian_to_spherical(dvec: AF) -> Tuple[AF64, AF64, AF64]:
     """
+    Convert Cartesian vectors to spherical coordinates. Always returns 
+    float64 arrays without exceptions. Single vectors are internally 
+    formed to be of the shape (1, 3) and all angles are measured in degrees.
+
+    Args:
+    -----
+    dvec: Shape (3,) or (N, 3). Each row represents (x, y, z).
+
+    Returns:
+    -------
+    (r, φ, θ) where:                    \
+        - r is radius                   \
+        - φ is azimuth in degrees       \
+        - θ is inclination in degrees   
+
+    Raises
+    ------
+    ValueError: If input shape is invalid.
     """
     if hasattr(dvec, 'shape'):
         
@@ -151,6 +197,10 @@ def _sph2cart_kernel(
     x: np.ndarray, y: np.ndarray, z: np.ndarray
 ) -> None:
     """
+    Numba-parallel kernel converting spherical coordinates to Cartesian. The
+    spherical coordinates radius `r`, the azimuth `phi` and the elevation 
+    `theta` and is being converted to the cartesian corresponding `x, y, z`.
+    This assumes that all arrays are 1D and aligned in length.
     """
     n = len(r)
     for i in prange(n):
@@ -173,6 +223,22 @@ def _sph2cart_kernel(
 
 def spherical_to_cartesian(radius: AF, phi: AF, theta: AF) -> AF64:
     """
+    Converts spherical coordinates into the Cartesian coordinate vectors. The 
+    behavior that the conversion have scalar being broadcasted to match the 
+    largest input length. Angles are internally in the method converted in 
+    radians. Output is always float64. Broadcasting follows NumPy style
+    semantics  where possible. All angles must be passed in degrees to avoid
+    computational confusion.
+
+    Args:
+    -----
+    radius: array like
+    phi: array-like (azimuth)
+    theta: array-like (elevation)
+
+    Returns:
+    --------
+    Array of shape (`N,3`) containing (`x, y, z`)
     """
     r = _as_1d_array(radius)
     p = _as_1d_array(phi)
@@ -228,6 +294,19 @@ def _rotation_matrix_elements(
     cp1: float64, sp1: float64, ct1: float64, st1: float64, inv: bool
 ) -> Tuple[float64, ...]:
     """
+    Compute elements of the spherical rotation matrix, this is used only 
+    internally by the rotation matrix.
+
+    Args:
+    -----
+    cp1, sp1: cos/sin of azimuth
+    ct1, st1: cos/sin of inclination (90 - elevation)
+    inv: Boolean value, `True`, then compute the inverse rotation element \
+        matrix.
+    
+    Returns:
+    --------
+    Tuple of matrix elements in row-major order.
     """
     if not inv: 
         return (
@@ -245,10 +324,27 @@ def _rotation_matrix_elements(
 
 @njit(fastmath=True, parallel=True, cache=True)
 def _angle_rotation_kernel(
-    p0: np.ndarray, t0: np.ndarray, p1: np.ndarray, t1: np.ndarray,
-    inv: bool=False
+    p0: np.ndarray,t0: np.ndarray,p1: np.ndarray,t1: np.ndarray,inv: bool=False
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
+    Numba-parallel kernel for composing or subtracting spherical rotations. Each
+    input pair (`φ0, θ0`) is rotated by (`φ1, θ1`). If `inv` is `True`, the 
+    inverse rotation is applied. Inputs in this method as well as the output is 
+    in radians. Internally does converts the spherical coordinates to the 
+    Cartesian correspondence, then applies the rotation before converting back.
+    Furthermore, the `z`- component are clamped before the arccos for stability 
+    purposes.
+
+    Args:
+    -----
+    p0, p1: Phi (azimuth) input and output angles respectively, measured in     \
+        radians.
+    t0, t1: Theta (elevation) input and output angles respectively, measured in \
+        radians.
+    
+    Returns:
+    --------
+    Rotated `azimuth` angles and `inclination` (in radians). 
     """
     n = len(p0)
     p_out = np.empty(n, dtype=np.float64)
@@ -275,6 +371,7 @@ def _angle_rotation_kernel(
             m00, m01, m02 = cp1 * ct1, -sp1, cp1 * st1
             m10, m11, m12 = sp1 * ct1, cp1, sp1 * st1
             m20, m21, m22 = -st1, ZERO, ct1
+        
         else:
             m00, m01, m02 = cp1 * ct1, sp1 * ct1, -st1
             m10, m11, m12 = -sp1, cp1, ZERO
@@ -303,6 +400,13 @@ def _combine_angles(
     inv: bool=False
 ) -> Tuple[AF64, Af64]:
     """
+    Combine two spherical angle sets with optional inversion. Input arrays must
+    share compatible shapes. Output preserves original shape. Internally 
+    operates in radians for numerical stability.
+
+    Returns:
+    --------
+    Resulting (`φ, θ`) in degrees.
     """
     p0 = np.asarray(p0, dtype=np.float64)
     t0 = np.asarray(t0, dtype=np.float64)
@@ -334,12 +438,16 @@ def _combine_angles(
 
 def add_angles(phi0:AF, theta0:AF, phi1:AF, theta1:AF) -> Tuple[AF64,AF64]:
     """
+    Compose two spherical rotations. Returns the spherical angles obtained by
+    applying (φ1, θ1) after (φ0, θ0). All angles are in degrees.
     """
     return _combine_angles(phi0, theta0, phi1, theta1, inv=False)
 
 
 def sub_angles(phi0:AF, theta0:AF, phi1:AF, theta1:AF) -> Tuple[AF64,AF64]:
     """
+    Subtract (invert) spherical rotation angles. Returns the spherical angles 
+    obtained by removing (`φ1, θ1`) from (`φ0, θ0`). All angles are in degrees.
     """
     return _combine_angles(phi0, theta0, phi1, theta1, inv=True)
 
@@ -347,6 +455,16 @@ def sub_angles(phi0:AF, theta0:AF, phi1:AF, theta1:AF) -> Tuple[AF64,AF64]:
 @njit(fastmath=True, parallel=True, cache=True)
 def batch_cartesian_to_spherical(dvec: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
+    Batch conversion from Cartesian to spherical, which is fully numba compiled,
+    and optimized specifically for larger vectorized computations.
+
+    Args:
+    -----
+    dvec : Shape (N, 3)
+
+    Returns:
+    --------
+    (r, φ, θ) with angles in degrees.
     """
     n = dvec.shape[0]
     x = dvec[:, 0]
@@ -367,6 +485,19 @@ def batch_cartesian_to_spherical(dvec: np.ndarray) -> Tuple[np.ndarray, np.ndarr
 @njit(fastmath=True, parallel=True, cache=True)
 def batch_spherical_to_cartesian(r: np.ndarray, p: np.ndarray, t: np.ndarray) -> np.ndarray:
     """
+    High-performance batch conversion from spherical to Cartesian. which is fully 
+    numba compiled, and optimized specifically for larger vectorized computations.
+
+    Args:
+    -----
+    r : np.ndarray
+    p : np.ndarray
+    t : np.ndarray
+        Angles must be in degrees.
+
+    Returns:
+    --------
+    Shape (N, 3) Cartesian coordinates.
     """
     n = len(r)
     

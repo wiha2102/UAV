@@ -29,8 +29,19 @@ from numpy.typing import DTypeLike, NDArray
 
 class DataProcessor:
     """
-    Handles structured transformations of input tabular data such as pd.DataFrame
-    into consistent NumPy arrays
+    Schema-driven transformation layer for tabular dataset ingestion. The
+    `DataProcessor` converts the raw `pandas.DataFrame` chunks into structured,
+    dtype-consistent `NumPy` arrays according to a predefined schema.
+
+        - Validate presence of expected columns
+        - Enforce strict dtype casting where possible
+        - Decode nested / stacked structured (including JSON-encoded arrays)
+        - Gracefully handle of malformed, missing or ragged data.
+        - Prove safe concatenated across multiple processed chunks.
+
+    The processor guarantees that downstream components receive clean, shape
+    consistent `NumPy`arrays independent of the original file format or
+    serialization details,  
     """
     SCHEMA = {
         "dvec"      : {"dtype": np.float32, "stacked": True, "dim": 3},
@@ -51,7 +62,27 @@ class DataProcessor:
         self._dtype_cache: Dict[str,np.dtype] = {}
     
     def process_chunk(self, chunk: pd.DataFrame) -> Dict[str, NDArray[Any]]:
-        
+        """
+        Transform a raw DataFrame chunk into schema-compliant NumPy arrays.
+        Each column defined in `SCHEMA` is validated and converted according to
+        following features
+
+        - Expected dtype
+        - Whether the column contains stacked (nested) structures
+        - Required decoding (e.g., JSON arrays)
+
+        Malformed or incompatible columns are safely coerced to `object` dtype 
+        instead of raising, ensuring that ingestion pipelines remain fault
+        tolerant.
+
+        Args:
+        -----
+        chunk: A raw batch of tabular data.
+
+        Returns:
+        --------
+        Dictionary mapping column names to processed NumPy arrays.
+        """
         pc: Dict[str,NDArray[Any]] = {}
         for column, spec in self.SCHEMA.items():
             
@@ -82,7 +113,12 @@ class DataProcessor:
     def _convert_simple_column(self,
         values: NDArray[Any], dtype: DTypeLike, column: str
     ) -> NDArray[Any]:
-        """ Convert non-stacked column """
+        """
+        Convert a non-stacked (scalar) column to the target dtype. If casting 
+        fails due to invalid or non-convertible values, the column is coerced 
+        to `object` dtype and processing continues without raising. This method 
+        ensures robustness while preserving as much type integrity as possible.
+        """
         try:  
             return values.astype(dtype, copy=False)
         
@@ -94,7 +130,19 @@ class DataProcessor:
     def _convert_stacked_column(self,
         values: NDArray[Any], dtype: DTypeLike, column: str
     ) -> NDArray[Any]:
-        """ Convert stacked columns with nested data """
+        """
+        Convert a stacked (nested) column into a structured NumPy array. 
+        Stacked columns may contain following features
+
+        - Python lists / arrays
+        - JSON-encoded arrays (strings)
+        - Potentially ragged or malformed entries
+
+        The method detects the structure from the first valid sample and
+        applies the appropriate decoding or casting strategy. If shape or
+        dtype consistency cannot be guaranteed, the column safely falls back
+        to `object` dtype.
+        """
         sample = self._first_valid(values)
         if sample is None: 
             return np.asarray(values, dtype=object)
@@ -126,7 +174,13 @@ class DataProcessor:
     def _decode_json_array(self,
             values: NDArray[Any], dtype: DTypeLike, column: str
     ) -> NDArray[Any]:
-        """ Decode JSON arrays from string values """
+        """
+        Decode JSON-encoded array elements within a stacked column. Each string 
+        entry is parsed using `orjson` and converted into a NumPy array of the 
+        target dtype. Non-string or missing values are preserved as `None`. If 
+        any decoding error occurs (e.g., malformed JSON), the entire column is 
+        safely coerced to `object` dtype to prevent pipeline interruption.
+        """
         try: 
             dv: List[Any] = []
             for v in values:
@@ -146,7 +200,15 @@ class DataProcessor:
 
     @staticmethod
     def _first_valid(values: NDArray[Any]) -> Optional[Any]:
-        """ Retrieve the first non-None value from passed array """
+        """
+        Return the first non-null, non-NaN element from an array. Used to infer 
+        the structural type of a stacked column (e.g., list vs. JSON string) 
+        before selecting the appropriate conversion strategy.
+
+        Returns:
+        --------
+        The first valid value, or None if no such value exists.
+        """
         if values.dtype != object:
             return values[0] if values.size > 0 else None
 
@@ -159,6 +221,21 @@ class DataProcessor:
 
 
     def concatenate(self,results: List[Dict[str,NDArray[Any]]]) -> Dict[str,NDArray[Any]]:
+        """
+        Safely concatenate multiple processed chunk results. Each key present 
+        in the first result dictionary is concatenated across all chunks along 
+        axis 0. If dtype or shape incompatibilities prevent standard 
+        concatenation, the method falls back to concatenation with `object` 
+        dtype to preserve data while avoiding failure.
+
+        Args:
+        -----
+        results: List of processed chunk outputs.
+
+        Returns
+        -------
+        Dictionary of concatenated arrays per column.
+        """
         if not results: 
             return {
                 key: np.empty((0,), dtype=cast(DTypeLike, spec["dtype"])) 
@@ -190,12 +267,26 @@ class DataProcessor:
     
 
     def _safe_parse(self, value: Any) -> Any:
-        """Safely parse a value that might be JSON or None"""
+        """
+        Attempt to safely parse a value that may contain JSON-encoded data.
+
+        Behavior
+        --------
+        - Returns None for null or NaN values
+        - Attempts JSON decoding for string inputs
+        - Returns the original value if decoding fails
+        - Returns non-string values unchanged
+
+        This utility is used as a defensive fallback during malformed JSON
+        handling.
+        """
         if value is None or pd.isna(value):
             return None
+        
         if isinstance(value, str):
             try:
                 return orjson.loads(value)
             except:
                 return value
+        
         return value

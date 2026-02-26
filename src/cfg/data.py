@@ -12,7 +12,7 @@ from typing import ClassVar, Final, Tuple
 from enum import IntEnum
 
 from src.cfg.const import AERIAL, TERRESTRIAL
-from src.configs.const import LIGHT_SPEED
+from src.cfg.const import LIGHT_SPEED
 
 
 
@@ -31,6 +31,22 @@ class AngleIndex(IntEnum):
         return {
             "aoa_phi": cls.AOA_PHI, "aoa_theta": cls.AOA_THETA,
             "aod_phi": cls.AOD_PHI, "aod_theta": cls.AOD_THETA
+        }[state.lower()]
+
+
+class LinkState(IntEnum):
+    NO_LINK = 0
+    NLOS    = 1
+    LOS     = 2
+
+    @classmethod
+    @property
+    def n_state(cls) -> int: return len(cls)
+
+    @classmethod
+    def from_string(cls, state: str) -> LinkState: 
+        return  {
+            "no-link": cls.NO_LINK, "nlos": cls.NLOS, "los": cls.LOS
         }[state.lower()]
 
 

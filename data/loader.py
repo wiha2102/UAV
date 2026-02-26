@@ -4,7 +4,7 @@ data/loader.py
 High-level dataset loading layer, this module defines the `DataLoader`,
 responsible for:
     
-    - Locating dataset files
+    - Locate dataset files
     - Selecting the appropriate file handler
     - Loading data in chunks
     - Processing these chunks in parallel
@@ -60,6 +60,29 @@ class DataLoader:
     
 
     def load(self, paths: Union[str,List[str]]) -> Dict[str, np.ndarray]:
+        """
+        Load and process one or more dataset files. This include that for each 
+        file that is being loaded there are loaded following these steps.
+
+            - Resolve the appropriate file handler.
+            - Stream the file in chunks.
+            - Validate required columns
+            - Process chunks in parallel
+            - Concatenate structured NumPy arrays outputs
+        
+        Args:
+        -----
+        paths: Single file or a list of files to load.
+        
+        Returns:
+        --------
+        Dictionary of concatenated NumPy arrays keyed by the corresponding \
+            column name from the file.
+        
+        Raises:
+        -------
+        RuntimeError: If there are no chunks successfully processed.
+        """
         if isinstance(paths,(str,Path)): 
             paths = [paths]
         
@@ -122,6 +145,20 @@ class DataLoader:
         data: Dict[str,np.ndarray], path: Union[str,Path], fmt: Optional[str]=None
     ):
         """
+        Persist processed dataset arrays to disk. The output is defined in the 
+        format inferred file extension unless specifically specified.
+
+        Args:
+        -----
+        data: Structured dataset to persists
+        path: Target filepath, where the dataset is to be stored.
+        fmt: Explicit file-format override (e.g., csv, ...). If provided, it must   \
+            correspond to a registered handler, or else its being inferred from     \
+            the file, if failed there as well an error is raised.
+        
+        Raises:
+        -------
+        ValueError: If the requested format is unsupported it raises a error.
         """
         path = Path(path)
         if fmt is None:
@@ -140,6 +177,20 @@ class DataLoader:
 
     def validate_data(self, data: Dict[str, np.ndarray]) -> bool:
         """
+        Validate structural integrity of a processed dataset, the integrity is
+        being validated by following
+
+            - Dataset dictionary is non-empty
+            - All required columns are present
+            - All arrays share identical length
+        
+        Args:
+        -----
+        data: Processed data dictionary
+
+        Returns:
+        --------
+        Boolean value that is `True` if structurally valid, else `False`.
         """
         if not data: 
             return False
@@ -164,6 +215,20 @@ def shuffle_and_split(
     test_ratio: float = 0.0, seed: int = 42
 ) -> Tuple[Dict[str, np.ndarray], ...]:
     """
+    Shuffle and split a dataset into train/validation/test subsets. Splits are 
+    all deterministic given a random seed into `NumPy` and preserve the alignment
+    across all the feature arrays.
+
+    Args:
+    -----
+    data: Structured dataset with consistent array lengths.
+    val_ratio: Fraction of data reserved for validation
+    test_ratio: Fraction of data preserved for testing.
+    seed: NumPy seed for reproducibility shuffling of the data.
+
+    Returns:
+    --------
+    Tuple of (`train, validation`) if `test_ratio==0` else (`train, val, test`)
     """
     if not 0 <= val_ratio <= 1:
         raise ValueError(f"val_ratio must be between 0 and 1, got {val_ratio}")
