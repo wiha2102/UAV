@@ -210,6 +210,11 @@ class DataLoader:
         return True
 
 
+def load_dataset(dataset: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    loader = DataLoader()
+    return loader.load(dataset)
+
+
 def shuffle_and_split(
     data: Dict[str, np.ndarray], val_ratio: float = 0.2, 
     test_ratio: float = 0.0, seed: int = 42

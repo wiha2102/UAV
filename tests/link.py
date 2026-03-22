@@ -56,6 +56,7 @@ def print_classification_report(y_true, y_pred, class_names=None):
     print("-" * 60)
     
     for i, class_name in enumerate(class_names):
+        
         # Binary mask for current class
         y_true_binary = (y_true == i).astype(int)
         y_pred_binary = (y_pred == i).astype(int)
@@ -75,10 +76,10 @@ def print_classification_report(y_true, y_pred, class_names=None):
 
 def calculate_top_k_accuracy(y_true, y_prob, k=2):
     """Calculate top-k accuracy"""
+
     # Get indices of top k predictions
     top_k_preds = np.argsort(y_prob, axis=1)[:, -k:]
     
-    # Check if true label is in top k predictions
     correct = 0
     for i, true_label in enumerate(y_true):
         if true_label in top_k_preds[i]:
@@ -129,21 +130,18 @@ def test_evaluate_model(args: argparse.Namespace):
     print(f"  Recall:    {recall:.4f}")
     print(f"  F1-Score:  {f1:.4f}")
 
-    # Class names based on LinkState enum
     class_names = ["No-Link", "NLOS", "LOS"]
     
     # Confusion matrix
     cm = confusion_matrix(y_test, y_pred)
     print_confusion_matrix(cm, class_names)
 
-    # Detailed classification report
     print_classification_report(y_test, y_pred, class_names)
     
     # Top-2 accuracy (useful for 3-class problem)
     top2_acc = calculate_top_k_accuracy(y_test, y_prob, k=2)
     print(f"\nTop-2 Accuracy: {top2_acc:.4f}")
     
-    # Class distribution
     print(f"\nClass Distribution in Test Set:")
     unique, counts = np.unique(y_test, return_counts=True)
     for class_id, count, class_name in zip(unique, counts, class_names):

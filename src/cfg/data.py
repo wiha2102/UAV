@@ -27,6 +27,11 @@ class AngleIndex(IntEnum):
     def n_angles(cls) -> int: return len(cls)
 
     @classmethod
+    @property
+    def angle_name(cls) -> Tuple[str, ...]:
+        return ("AoA φ", "AoA θ", "AoD φ", "AoD θ")
+
+    @classmethod
     def from_string(cls, state: str) -> AngleIndex: 
         return {
             "aoa_phi": cls.AOA_PHI, "aoa_theta": cls.AOA_THETA,
